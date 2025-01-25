@@ -34,7 +34,7 @@ If you're lucky, you might even be able to use the standard Home Assistant mecha
 
 Run ```./borgify-ha-backup.py -h``` to see all available options.
 
-Read the comments in the source code or the source code itself to learn more about Home Assistant backup format horrors ;-)
+Read the comments in the [source code](https://github.com/azzieg/borgify-ha-backup/blob/main/borgify-ha-backup.py) or the source code itself to learn more about Home Assistant backup format horrors ;-)
 
 ## Related projects
 
