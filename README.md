@@ -12,7 +12,7 @@ Let's fix it!
 
 ## How?
 
-Download the tool, make it executable and run it. It was tested on Mac and Linux, but I see no reason why it wouldn't run on Windows.
+Download the [script](https://raw.githubusercontent.com/azzieg/borgify-ha-backup/main/borgify-ha-backup.py), make it executable and run it. It was tested on Mac and Linux, but I see no reason why it wouldn't run on Windows.
 
 ```
 ./borgify-ha-backup.py automatic_backup_2025_1_4.tar decrypted_backup_2025_1_4.tar
