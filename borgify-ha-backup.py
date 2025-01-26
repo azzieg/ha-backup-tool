@@ -5,8 +5,10 @@ import hashlib
 import io
 import json
 import os
+import shutil
 import sys
 import tarfile
+import tempfile
 import gzip
 
 # pip install pycryptodome
@@ -23,19 +25,29 @@ https://borgbackup.org/
 
 def parse_args():
   parser = argparse.ArgumentParser(description=DESCRIPTION, epilog=EPILOG)
-  parser.add_argument('input_tar', help='encrypted backup archive to decrypt')
-  parser.add_argument('output_tar', help='decrypted backup archive to write')
+  parser.add_argument('-i', '--input', metavar='IN_TAR', required=True,
+                      help='encrypted backup archive to decrypt')
+  parser.add_argument('-o', '--output', metavar='OUT_TAR',
+                      help='decrypted backup archive to write')
   parser.add_argument('-p', '--password', metavar='KEY',
                       help='encryption key, typically YOUR-ENCR-YPIO-NKEY-FROM-SETT-INGS')
   parser.add_argument('-l', '--list', action='store_true', help='Output processed archive entities')
   parser.add_argument('-c', '--compressed', action='store_true',
                       help='do not decompress subarchives')
-  parser.add_argument('-d', '--delete', action='store_true',
+  parser.add_argument('-D', '--delete', action='store_true',
                       help='remove the input archive after writing the output')
+  parser.add_argument('-R', '--replace', action='store_true',
+                      help='replace the input archive with the output in the end')
 
   args = parser.parse_args()
+  assert args.output or args.replace, 'Output (-o) or replace mode (-R) must be specified.'
+  assert not (args.delete and args.replace), 'Delete (-D) and replace (-R) are exclusive.'
+  assert args.input != args.output, 'Input (-i) and output (-o) cannot be the same, use -R instead.'
   if args.password is None:
     args.password = input('Encryption key: ')
+  if args.output is None:
+    dirname, basename = os.path.split(args.input)
+    args.output = tempfile.NamedTemporaryFile(prefix=basename + '.tmp', dir=dirname).name
   return args
 
 # AES-128 encryption as implemented by Secure Tar (https://github.com/pvizeli/securetar).
@@ -113,6 +125,9 @@ def convert_tar_entry(args, entry, file):
 
   if os.path.normpath(entry.name) == 'backup.json':
     manifest = json.load(file)
+    assert manifest['version'] == 2, 'Only manifest version 2 is supported.'
+    assert manifest['protected'], 'The archive must be encrypted.'
+    assert manifest['crypto'] == 'aes128', 'Only AES-128 encryption is supported.'
     manifest['protected'] = False
     if not args.compressed:
       manifest['compressed'] = False
@@ -135,17 +150,19 @@ def convert_tar_entry(args, entry, file):
 
 
 def main(args):
-  with tarfile.open(args.input_tar) as input_tar:
-    with tarfile.open(args.output_tar ,'w', format=input_tar.format, encoding=input_tar.encoding,
-                      pax_headers=input_tar.pax_headers) as output_tar:
-      for entry in input_tar:
-        (entry, file) = convert_tar_entry(args, entry, input_tar.extractfile(entry))
+  with tarfile.open(args.input) as input:
+    with tarfile.open(args.output, 'w', format=input.format, encoding=input.encoding, 
+                      pax_headers=input.pax_headers) as output:
+      for entry in input:
+        entry, file = convert_tar_entry(args, entry, input.extractfile(entry))
         try:
-          output_tar.addfile(entry, file)
+          output.addfile(entry, file)
         except Exception as error:
           raise RuntimeError('Tar entry conversion failed, check the encryption key.') from error
   if args.delete:
-    os.remove(args.input_tar)
+    os.remove(args.input)
+  if args.replace:
+    shutil.move(args.output, args.input)
 
 
 if __name__ == '__main__':
