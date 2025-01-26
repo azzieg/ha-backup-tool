@@ -15,7 +15,7 @@ Let's fix it!
 Download the [script](https://raw.githubusercontent.com/azzieg/borgify-ha-backup/main/borgify-ha-backup.py), make it executable and run it. It was tested on Mac and Linux, but I see no reason why it wouldn't run on Windows.
 
 ```
-./borgify-ha-backup.py automatic_backup_2025_1_4.tar decrypted_backup_2025_1_4.tar
+./borgify-ha-backup.py -i automatic_backup_2025_1_4.tar -o decrypted_backup_2025_1_4.tar
 ```
 
 The tool will ask you for your encryption key. You can also specify it via ```-p YOUR-ENCR-YPIO-NKEY-FROM-SETT-INGS```.
