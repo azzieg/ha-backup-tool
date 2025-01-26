@@ -32,7 +32,11 @@ def parse_args():
                       help='do not decompress subarchives')
   parser.add_argument('-d', '--delete', action='store_true',
                       help='remove the input archive after writing the output')
-  return parser.parse_args()
+
+  args = parser.parse_args()
+  if args.password is None:
+    args.password = input('Encryption key: ')
+  return args
 
 # AES-128 encryption as implemented by Secure Tar (https://github.com/pvizeli/securetar).
 # - Encryption key is a password hashed 100 times with SHA-256 and cropped to 128 bits.
@@ -101,12 +105,11 @@ class AesFile:
     return self._file.tell() - 16 - len(self._buf)
 
 
-def convert_tar_entry(entry):
+def convert_tar_entry(args, entry, file):
   if args.list:
     print(entry.name)
   if not entry.isfile():
     return (entry, None)
-  file = input_tar.extractfile(entry)
 
   if os.path.normpath(entry.name) == 'backup.json':
     manifest = json.load(file)
@@ -119,7 +122,7 @@ def convert_tar_entry(entry):
 
   if '.tar' in entry.name:
     # Secure Tar, so we need to decrypt.
-    file = AesFile(password, file)
+    file = AesFile(args.password, file)
     entry.size = file.size()
     if entry.name.endswith('.gz') and not args.compressed:
       # Compressed, so we need to decompress for backup deduplication.
@@ -131,11 +134,13 @@ def convert_tar_entry(entry):
   return (entry, file)
 
 
-if __name__ == '__main__':
-  args = parse_args()
-  password = args.password or input('Encryption key: ')
+def main(args):
   with tarfile.open(args.input_tar) as input_tar:
     with tarfile.open(args.output_tar ,'w', format=input_tar.format, encoding=input_tar.encoding,
                       pax_headers=input_tar.pax_headers) as output_tar:
       for entry in input_tar:
-        output_tar.addfile(*convert_tar_entry(entry))
+        output_tar.addfile(*convert_tar_entry(args, entry, input_tar.extractfile(entry)))
+
+
+if __name__ == '__main__':
+  main(parse_args())
