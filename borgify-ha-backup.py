@@ -139,7 +139,13 @@ def main(args):
     with tarfile.open(args.output_tar ,'w', format=input_tar.format, encoding=input_tar.encoding,
                       pax_headers=input_tar.pax_headers) as output_tar:
       for entry in input_tar:
-        output_tar.addfile(*convert_tar_entry(args, entry, input_tar.extractfile(entry)))
+        (entry, file) = convert_tar_entry(args, entry, input_tar.extractfile(entry))
+        try:
+          output_tar.addfile(entry, file)
+        except Exception as error:
+          raise RuntimeError('Tar entry conversion failed, check the encryption key.') from error
+  if args.delete:
+    os.remove(args.input_tar)
 
 
 if __name__ == '__main__':
