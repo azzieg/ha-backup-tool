@@ -26,12 +26,12 @@ https://borgbackup.org/
 def parse_args():
   parser = argparse.ArgumentParser(description=DESCRIPTION, epilog=EPILOG)
   parser.add_argument('-i', '--input', metavar='IN_TAR', required=True,
-                      help='encrypted backup archive to decrypt')
+                      help='encrypted backup archive to decrypt, required')
   parser.add_argument('-o', '--output', metavar='OUT_TAR',
-                      help='decrypted backup archive to write')
+                      help='decrypted backup archive to write, required unless -R is used')
   parser.add_argument('-p', '--password', metavar='KEY',
                       help='encryption key, typically YOUR-ENCR-YPIO-NKEY-FROM-SETT-INGS')
-  parser.add_argument('-l', '--list', action='store_true', help='Output processed archive entities')
+  parser.add_argument('-l', '--list', action='store_true', help='print processed archive entities')
   parser.add_argument('-c', '--compressed', action='store_true',
                       help='do not decompress subarchives')
   parser.add_argument('-D', '--delete', action='store_true',
