@@ -30,6 +30,17 @@ You can validate that the produced tar archive (and other archives embedded in i
 
 If you're lucky, you might even be able to use the standard Home Assistant mechanism to recover from the resulting archive. That's one of the project goals, but as for anything here - no guarantees.
 
+## NAS integration
+
+Is your Home Assistant uploading backups to a NAS? Is your NAS Linux based? If so, consider running something like:
+
+```
+inotifywait -mqe close_write --format %f ~hass/backup/encrypted) | xargs -i \
+~/borgify-ha-backup.py -i ~hass/backup/encrypted/'{}' -o ~hass/backup/'{}' -D -p YOUR-ENCR-YPIO-NKEY-FROM-SETT-INGS
+```
+
+This would monitor ```~hass/backup/encrypted``` for uploaded backups, automatically decrypt and decompress them into ```~hass/backup``` and remove the encrypted original.
+
 ## Further reading
 
 Run ```./borgify-ha-backup.py -h``` to see all available options.
