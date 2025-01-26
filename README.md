@@ -36,7 +36,7 @@ Is your Home Assistant uploading backups to a NAS? Is your NAS Linux based? If s
 
 ```
 inotifywait -mqe close_write --format %f ~hass/backup/encrypted) | xargs -i \
-~/borgify-ha-backup.py -i ~hass/backup/encrypted/'{}' -o ~hass/backup/'{}' -D -p YOUR-ENCR-YPIO-NKEY-FROM-SETT-INGS
+./borgify-ha-backup.py -i ha-backup/encrypted/'{}' -o ha-backup/'{}' -D -p YOUR-ENCR-YPIO-NKEY-FROM-SETT-INGS
 ```
 
 This would monitor ```~hass/backup/encrypted``` for uploaded backups, automatically decrypt and decompress them into ```~hass/backup``` and remove the encrypted original.
