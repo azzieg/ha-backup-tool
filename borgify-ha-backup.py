@@ -25,9 +25,9 @@ https://borgbackup.org/
 
 def parse_args():
   parser = argparse.ArgumentParser(description=DESCRIPTION, epilog=EPILOG)
-  parser.add_argument('-i', '--input', metavar='IN_TAR', required=True,
-                      help='encrypted backup archive to decrypt, required')
-  parser.add_argument('-o', '--output', metavar='OUT_TAR',
+  parser.add_argument('-i', '--input', metavar='IN_TAR', type=argparse.FileType('rb'),
+                      help='encrypted backup archive to decrypt, required', required=True)
+  parser.add_argument('-o', '--output', metavar='OUT_TAR', type=argparse.FileType('wb'),
                       help='decrypted backup archive to write, required unless -R is used')
   parser.add_argument('-p', '--password', metavar='KEY',
                       help='encryption key, typically YOUR-ENCR-YPIO-NKEY-FROM-SETT-INGS')
@@ -42,12 +42,14 @@ def parse_args():
   args = parser.parse_args()
   assert args.output or args.replace, 'Output (-o) or replace mode (-R) must be specified.'
   assert not (args.delete and args.replace), 'Delete (-D) and replace (-R) are exclusive.'
-  assert args.input != args.output, 'Input (-i) and output (-o) cannot be the same, use -R instead.'
+  same = args.output and os.path.samefile(args.input.name, args.output.name)
+  assert not same, 'Input (-i) and output (-o) cannot be the same, use replacement (-R) instead.'
+
   if args.password is None:
     args.password = input('Encryption key: ')
   if args.output is None:
-    dirname, basename = os.path.split(args.input)
-    args.output = tempfile.NamedTemporaryFile(prefix=basename + '.tmp', dir=dirname).name
+    dirname, basename = os.path.split(args.input.name)
+    args.output = tempfile.NamedTemporaryFile(prefix=basename + '.tmp', dir=dirname, delete=False)
   return args
 
 # AES-128 encryption as implemented by Secure Tar (https://github.com/pvizeli/securetar).
@@ -150,8 +152,8 @@ def convert_tar_entry(args, entry, file):
 
 
 def main(args):
-  with tarfile.open(args.input) as input:
-    with tarfile.open(args.output, 'w', format=input.format, encoding=input.encoding, 
+  with tarfile.open(fileobj=args.input) as input:
+    with tarfile.open(fileobj=args.output, mode='w', format=input.format, encoding=input.encoding,
                       pax_headers=input.pax_headers) as output:
       for entry in input:
         entry, file = convert_tar_entry(args, entry, input.extractfile(entry))
@@ -159,10 +161,12 @@ def main(args):
           output.addfile(entry, file)
         except Exception as error:
           raise RuntimeError('Tar entry conversion failed, check the encryption key.') from error
+  args.output.close()
+  args.input.close()
   if args.delete:
-    os.remove(args.input)
+    os.remove(args.input.name)
   if args.replace:
-    shutil.move(args.output, args.input)
+    shutil.move(args.output.name, args.input.name)
 
 
 if __name__ == '__main__':
