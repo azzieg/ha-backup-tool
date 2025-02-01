@@ -119,50 +119,81 @@ class AesFile:
     return self._file.tell() - 16 - len(self._buf)
 
 
-def convert_tar_entry(args, entry, file):
-  if args.list:
-    print(entry.name)
-  if not entry.isfile():
-    return (entry, None)
+class TarConverter:
+  def __init__(self, input_file):
+    self._input_file = input_file
 
-  if os.path.normpath(entry.name) == 'backup.json':
-    manifest = json.load(file)
-    assert manifest['version'] == 2, 'Only manifest version 2 is supported.'
-    assert manifest['protected'], 'The archive must be encrypted.'
-    assert manifest['crypto'] == 'aes128', 'Only AES-128 encryption is supported.'
-    manifest['protected'] = False
-    if not args.compressed:
-      manifest['compressed'] = False
-    manifest = json.dumps(manifest).encode()
-    entry.size = len(manifest)
-    return (entry, io.BytesIO(manifest))
+  def __enter__(self):
+    self._input_tar = tarfile.open(fileobj=self._input_file)
+    return self
 
-  if '.tar' in entry.name:
-    # Secure Tar, so we need to decrypt.
-    file = AesFile(args.password, file)
-    entry.size = file.size()
-    if entry.name.endswith('.gz') and not args.compressed:
-      # Compressed, so we need to decompress for backup deduplication.
-      entry.name = os.path.splitext(entry.name)[0]
-      file.seek(-4, os.SEEK_END)
-      entry.size = int.from_bytes(file.read(4), 'little')
-      file.seek(0)
-      file = gzip.GzipFile(mode='r', fileobj=file)
-  return (entry, file)
+  def __exit__(self, exc_type, exc_value, traceback):
+    self._input_tar.close()
+
+  def convert(self, output_file):
+    with tarfile.open(fileobj=output_file, mode='w', format=self._input_tar.format,
+                      encoding=self._input_tar.encoding,
+                      pax_headers=self._input_tar.pax_headers) as output_tar:
+      for input_member_info in self._input_tar.getmembers():
+        input_member_file = self._input_tar.extractfile(input_member_info)
+        for output_member in self.convert_member(input_member_info, input_member_file):
+          output_tar.addfile(*output_member)
+
+  def convert_member(self, info, file):
+    yield info, file
+
+
+class OuterTarConverter(TarConverter):
+  def __init__(self, args, input_file):
+    super().__init__(input_file)
+    self._args = args
+
+  def __enter__(self):
+    super().__enter__()
+    self._manifest = json.load(self._input_tar.extractfile('./backup.json'))
+    assert self._manifest['version'] == 2, 'Only manifest version 2 is supported.'
+    if self._manifest['protected']:
+      assert self._manifest['crypto'] == 'aes128', 'Only AES-128 encryption is supported.'
+    return self
+
+  def convert_member(self, info, file):
+    if self._args.list:
+      print(info.name)
+    if not info.isfile():
+      yield info, None
+      return
+
+    if os.path.normpath(info.name) == 'backup.json':
+      manifest = json.load(file)
+      manifest['protected'] = False
+      if not self._args.compressed:
+        manifest['compressed'] = False
+      manifest = json.dumps(manifest).encode()
+      info.size = len(manifest)
+      yield info, io.BytesIO(manifest)
+      return
+
+    if '.tar' in info.name and self._manifest['protected']:
+      # Secure Tar, so we need to decrypt.
+      file = AesFile(self._args.password, file)
+      info.size = file.size()
+      if info.name.endswith('.gz') and not self._args.compressed:
+        # Compressed, so we need to decompress for backup deduplication.
+        info.name = os.path.splitext(info.name)[0]
+        file.seek(-4, os.SEEK_END)
+        info.size = int.from_bytes(file.read(4), 'little')
+        file.seek(0)
+        file = gzip.GzipFile(mode='r', fileobj=file)
+    yield info, file
 
 
 def main(args):
-  with tarfile.open(fileobj=args.input) as input:
-    with tarfile.open(fileobj=args.output, mode='w', format=input.format, encoding=input.encoding,
-                      pax_headers=input.pax_headers) as output:
-      for entry in input:
-        entry, file = convert_tar_entry(args, entry, input.extractfile(entry))
-        try:
-          output.addfile(entry, file)
-        except Exception as error:
-          raise RuntimeError('Tar entry conversion failed, check the encryption key.') from error
-  args.output.close()
-  args.input.close()
+  with args.input as input, OuterTarConverter(args, input) as outer_tar:
+    with args.output as output:
+      try:
+        outer_tar.convert(output)
+      except Exception as error:
+        raise RuntimeError('Tar member conversion failed, check the encryption key.') from error
   if args.delete:
     os.remove(args.input.name)
   if args.replace:
