@@ -47,7 +47,7 @@ def parse_args():
 
   if args.password is None:
     args.password = input('Encryption key: ')
-  if args.output is None:
+  if not args.output:
     dirname, basename = os.path.split(args.input.name)
     args.output = tempfile.NamedTemporaryFile(prefix=basename + '.tmp', dir=dirname, delete=False)
   return args
@@ -56,19 +56,27 @@ def parse_args():
 # - Encryption key is a password hashed 100 times with SHA-256 and cropped to 128 bits.
 # - CBC mode is used, so the file is seekable. It's very useful, see below!
 # - IV is derived from a seed appended to the key and hashed like the password.
-# - IV seed is stored in the first 16 bytes. PKCS7 padding is used at the end.
-# - A header mode exists, but I did not see it used in the wild, so did not implement it.
+# - IV seed is stored in the first 16 bytes or after a 32-byte header.
+# - PKCS7 padding is used at the end.
 #
 # As of January 2025, Secure Tar also errorneously applies the padding before the last block. This 
 # breaks the CRC location in GZIP files. Luckily, we can correctly read the uncompressed size and 
 # Tarfile won't cross the EOF and won't trigger the CRC check. But it's a dumpster fire.
 class AesFile:
+  SECURETAR_MAGIC = b'SecureTar\x02\x00\x00\x00\x00\x00\x00'
+
   def __init__(self, password, file):
     self._key = AesFile._digest(password.encode())
     self._file = file
-    self._eof = file.seek(0, os.SEEK_END)
-    self.seek(-1, os.SEEK_END)
-    self._eof -= self.read(1)[0]
+    self._start = file.tell()
+    header = self._file.read(16)
+    if header == AesFile.SECURETAR_MAGIC:
+      self.size = int.from_bytes(file.read(8), 'big')
+      self._start += 32
+    else:
+      self.size = file.seek(0, os.SEEK_END) - self._start - 16
+      self.seek(-1, os.SEEK_END)
+      self.size -= self.read(1)[0]
     self.seek(0)
 
   def _digest(key):
@@ -77,7 +85,7 @@ class AesFile:
     return key[:16]
 
   def _init(self, block):
-    self._file.seek(block * 16)
+    self._file.seek(self._start + block * 16)
     iv = self._file.read(16)
     if block == 0:
       iv = AesFile._digest(self._key + iv)
@@ -88,9 +96,9 @@ class AesFile:
     return self._aes.decrypt(self._file.read(blocks * 16))
 
   def read(self, size):
-    position = self._file.tell() - len(self._buf)
-    if position + size > self._eof:
-      size = self._eof - position
+    position = self.tell()
+    if position + size > self.size:
+      size = self.size - position
     assert size >= 0
     blocks = (size - len(self._buf) + 15) // 16
     assert blocks >= 0
@@ -100,23 +108,20 @@ class AesFile:
     self._buf = self._buf[size:]
     return result
 
-  def size(self):
-    return self._eof - 16
-
   def seek(self, offset, whence=os.SEEK_SET):
     if whence == os.SEEK_END:
-      offset = self._eof + offset - 16
+      offset += self.size
     elif whence == os.SEEK_CUR:
-      offset = self._file.tell() + offset - 16
+      offset += self.tell()
     assert offset >= 0
-    assert offset <= self._eof - 16
+    assert offset <= self.size
     self._init(offset // 16)
     remaining = offset % 16
     if remaining > 0:
       self._buf = self._decrypt(1)[remaining:]
 
   def tell(self):
-    return self._file.tell() - 16 - len(self._buf)
+    return self._file.tell() - self._start - 16 - len(self._buf)
 
 
 class TarConverter:
@@ -129,6 +134,15 @@ class TarConverter:
 
   def __exit__(self, exc_type, exc_value, traceback):
     self._input_tar.close()
+
+  def extract(self, path):
+    found = None
+    for info in self._input_tar.getmembers():
+      if os.path.normpath(info.name) == path:
+        found = info
+    if found is None:
+      return None
+    return self._input_tar.extractfile(info)
 
   def convert(self, output_file):
     with tarfile.open(fileobj=output_file, mode='w', format=self._input_tar.format,
@@ -150,7 +164,7 @@ class OuterTarConverter(TarConverter):
 
   def __enter__(self):
     super().__enter__()
-    self._manifest = json.load(self._input_tar.extractfile('./backup.json'))
+    self._manifest = json.load(self.extract('backup.json'))
     assert self._manifest['version'] == 2, 'Only manifest version 2 is supported.'
     if self._manifest['protected']:
       assert self._manifest['crypto'] == 'aes128', 'Only AES-128 encryption is supported.'
@@ -159,9 +173,6 @@ class OuterTarConverter(TarConverter):
   def convert_member(self, info, file):
     if self._args.list:
       print(info.name)
-    if not info.isfile():
-      yield info, None
-      return
 
     if os.path.normpath(info.name) == 'backup.json':
       manifest = json.load(file)
@@ -170,13 +181,12 @@ class OuterTarConverter(TarConverter):
         manifest['compressed'] = False
       manifest = json.dumps(manifest).encode()
       info.size = len(manifest)
-      yield info, io.BytesIO(manifest)
-      return
-
-    if '.tar' in info.name and self._manifest['protected']:
-      # Secure Tar, so we need to decrypt.
-      file = AesFile(self._args.password, file)
-      info.size = file.size()
+      file = io.BytesIO(manifest)
+    elif '.tar' in info.name:
+      if self._manifest['protected']:
+        # Secure Tar, so we need to decrypt.
+        file = AesFile(self._args.password, file)
+        info.size = file.size
       if info.name.endswith('.gz') and not self._args.compressed:
         # Compressed, so we need to decompress for backup deduplication.
         info.name = os.path.splitext(info.name)[0]
